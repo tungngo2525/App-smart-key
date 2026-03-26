@@ -1,0 +1,12 @@
+{
+    "idf.portWin": "COM9",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-bridge.cfg"
+    ],
+    // PlatformIO IDE: disable auto-opening Serial Monitor after upload
+    "platformio-ide.autoOpenSerialMonitor": false,
+        "platformio-ide.monitor.autoStart": false,
+        // Prevent Python extension from auto-activating venv in new terminals,
+        // which can inject a line like '& <venv>\\Scripts\\Activate.ps1' into stdin
+        "python.terminal.activateEnvironment": false
+}

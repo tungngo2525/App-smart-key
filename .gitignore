@@ -1,0 +1,40 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Android
+*.apk
+*.ap_
+*.dex
+*.class
+local.properties
+.gradle/
+build/
+captures/
+.navigation/
+*.iml
+.idea/
+*.DS_Store
+
+# Firebase
+google-services.json
+
+# Misc
+*.log
+.DS_Store
+temp_patch.patch

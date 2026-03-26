@@ -1,0 +1,343 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "PlatformIO: Build",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (retry)",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (set 100ms)",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (adv name)",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (add NFC)",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (usb wait + heartbeat)",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (late logs + status)",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (modularized)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (fix redefs)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (fix externs)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (fix LED_PIN linkage)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (NFC no IRQ)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (NFC auto-recover)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build (final NFC robustness)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build firmware after serial tweaks",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Upload and open monitor (follow port)",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run",
+				"--target",
+				"upload",
+				"--upload-port",
+				"COM9",
+				";",
+				"C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+				"device",
+				"monitor"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after provisioning/NFC reorder",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after NFC log throttling",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after adding tag auth",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after suppressing NOT_FOUND spam",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after admin/tag management",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after adding BLE admin service",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after wiring admin modes into NFC",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Build iot env",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build with BLE/NFC yield coordination",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build with proper mutex coordination",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build with SELECT AID retry reliability",
+			"type": "shell",
+			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"group": "build"
+		}
+	]
+}

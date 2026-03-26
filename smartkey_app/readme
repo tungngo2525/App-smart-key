@@ -1,0 +1,1 @@
+.\gradlew.bat :app:installDebug --console=plain
