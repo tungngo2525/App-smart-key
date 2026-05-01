@@ -15,6 +15,11 @@
 #include "provisioning_phase.h"
 
 namespace {
+  constexpr uint8_t kClientHelloVersion = 1;
+  constexpr uint8_t kServerHelloVersion = 2;
+  const char* kClientHelloSigLabel = "BLE-CLIENT-HELLO";
+  const char* kServerHelloSigLabel = "BLE-SERVER-HELLO";
+
   // AUTH service (Phase B)
   const char* kAuthServiceUUID     = "d0d0d0d0-0000-4000-8000-d0d0d0d00000";
   const char* kCharClientHelloUUID = "d0d0d0d0-0001-4000-8000-d0d0d0d00001"; // Write: client eph pubkey + signature
@@ -38,6 +43,7 @@ namespace {
   mbedtls_ecp_point s_ephemeral_Q;      // our ephemeral pub
   uint8_t s_srvPubBuf[65]; size_t s_srvPubLen = 0; // uncompressed 65 bytes
   uint8_t s_cliPubBuf[65]; size_t s_cliPubLen = 0;
+  uint8_t s_devPubBuf[65]; size_t s_devPubLen = 0;
 
   // Derived keys
   uint8_t s_sessKeyEnc[32];
@@ -80,6 +86,7 @@ namespace {
   void reset_auth_state() {
     s_sessionReady = false;
     s_srvPubLen = 0; s_cliPubLen = 0;
+    s_devPubLen = 0;
     memset(s_sessKeyEnc, 0, sizeof(s_sessKeyEnc));
     memset(s_sessKeyMac, 0, sizeof(s_sessKeyMac));
   }
@@ -100,7 +107,7 @@ namespace {
         if (s_cliHelloBuf.size() < 3) return; // need ver + pubLen
         const uint8_t* p = (const uint8_t*)s_cliHelloBuf.data();
         uint8_t ver = p[0];
-        if (ver != 1) { Serial.println("[AUTH] Bad version"); s_cliHelloBuf.clear(); return; }
+        if (ver != kClientHelloVersion) { Serial.println("[AUTH] Bad version"); s_cliHelloBuf.clear(); return; }
         uint16_t pubLen = p[1] | (p[2] << 8);
         if (pubLen > sizeof(s_cliPubBuf)) { Serial.println("[AUTH] Bad pubLen"); s_cliHelloBuf.clear(); return; }
         if (s_cliHelloBuf.size() < (size_t)(3 + pubLen + 2)) return; // need sigLen
@@ -130,26 +137,89 @@ namespace {
     for (;;) {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-      // Placeholder: integrate with ProvisioningPhase public key retrieval & signature verification if needed.
-      // Currently Phase A (NFC) handles signature verification; for Phase B we trust provisioned state.
       if (!ProvisioningPhase::isProvisioned()) { Serial.println("[AUTH] Device not provisioned; aborting auth."); continue; }
-      // Optionally, could retrieve stored pub and verify client signature here.
-      Serial.println("[AUTH] Skipping client signature verify (Phase A already verified).");
-      Serial.println("[AUTH] Client ephem verified.");
+
+      uint8_t ownerPub65[65] = {0};
+      if (ProvisioningPhase::getPhonePubRaw(ownerPub65, sizeof(ownerPub65)) != 65 || ownerPub65[0] != 0x04) {
+        Serial.println("[AUTH] Missing provisioned owner public key.");
+        continue;
+      }
+
+      // CCC R3 §5.1: Strict P-256 uncompressed point validation
+      // Phase B is key-pinned: only the device provisioned in Phase A (NFC) can authenticate
+      if (s_cliPubLen != 65 || s_cliPubBuf[0] != 0x04) {
+        Serial.printf("[AUTH] Invalid client pub format (len=%u prefix=0x%02X) — rejected\n",
+                      s_cliPubLen, s_cliPubLen > 0 ? s_cliPubBuf[0] : 0);
+        continue;
+      }
+      if (s_cliSigLen < 60 || s_cliSigLen > 80) {
+        Serial.printf("[AUTH] Client sig length out of DER range (len=%u) — rejected\n", s_cliSigLen);
+        continue;
+      }
+
+      const size_t clientSignedLen = strlen(kClientHelloSigLabel) + s_cliPubLen;
+      uint8_t* clientSignedData = (uint8_t*)malloc(clientSignedLen);
+      if (!clientSignedData) {
+        Serial.println("[AUTH] OOM preparing client signature payload.");
+        continue;
+      }
+      memcpy(clientSignedData, kClientHelloSigLabel, strlen(kClientHelloSigLabel));
+      memcpy(clientSignedData + strlen(kClientHelloSigLabel), s_cliPubBuf, s_cliPubLen);
+
+      const bool clientVerified = ProvisioningPhase::verifySignatureP256(
+        ownerPub65,
+        clientSignedData,
+        clientSignedLen,
+        s_cliSigBuf,
+        s_cliSigLen
+      );
+      free(clientSignedData);
+      if (!clientVerified) {
+        Serial.println("[AUTH] Client ephemeral signature invalid.");
+        continue;
+      }
+      Serial.println("[AUTH] Client ephemeral signature verified.");
 
       // Generate our ephemeral, if needed
       if (s_srvPubLen == 0 && !gen_ephemeral()) { Serial.println("[AUTH] Failed to generate ephemeral."); continue; }
 
-      // Sign our ephemeral pub with device long-term key
-      uint8_t sigOut[80]; size_t sigOutLen = 0;
-      // TODO: Sign ephemeral with device keypair (persisted in ProvisioningPhase). For now, skip and set sigOutLen=0.
-      sigOutLen = 0;
+      if (!ProvisioningPhase::getDevicePubRaw(s_devPubBuf, sizeof(s_devPubBuf))) {
+        Serial.println("[AUTH] Failed to read ECU long-term public key.");
+        continue;
+      }
+      s_devPubLen = 65;
 
-      // Build ServerHello: [ver][pubLenLE][pub][sigLenLE][sig]
-      std::string resp; resp.reserve(1 + 2 + s_srvPubLen + 2 + sigOutLen);
-      resp.push_back((char)1);
+      // Sign server hello context with ECU long-term key.
+      const size_t serverSignedLen = strlen(kServerHelloSigLabel) + s_cliPubLen + s_srvPubLen + s_devPubLen;
+      uint8_t* serverSignedData = (uint8_t*)malloc(serverSignedLen);
+      if (!serverSignedData) {
+        Serial.println("[AUTH] OOM preparing server signature payload.");
+        continue;
+      }
+      size_t offset = 0;
+      memcpy(serverSignedData + offset, kServerHelloSigLabel, strlen(kServerHelloSigLabel));
+      offset += strlen(kServerHelloSigLabel);
+      memcpy(serverSignedData + offset, s_cliPubBuf, s_cliPubLen);
+      offset += s_cliPubLen;
+      memcpy(serverSignedData + offset, s_srvPubBuf, s_srvPubLen);
+      offset += s_srvPubLen;
+      memcpy(serverSignedData + offset, s_devPubBuf, s_devPubLen);
+
+      uint8_t sigOut[96];
+      size_t sigOutLen = ProvisioningPhase::signWithDeviceKey(serverSignedData, serverSignedLen, sigOut, sizeof(sigOut));
+      free(serverSignedData);
+      if (sigOutLen == 0) {
+        Serial.println("[AUTH] Failed to sign server hello.");
+        continue;
+      }
+
+      // Build ServerHello V2: [ver][srvPubLenLE][srvPub][devPubLenLE][devPub][sigLenLE][sig]
+      std::string resp; resp.reserve(1 + 2 + s_srvPubLen + 2 + s_devPubLen + 2 + sigOutLen);
+      resp.push_back((char)kServerHelloVersion);
       uint16_t pl = (uint16_t)s_srvPubLen; resp.push_back((char)(pl & 0xFF)); resp.push_back((char)(pl >> 8));
       resp.append((const char*)s_srvPubBuf, s_srvPubLen);
+      uint16_t dpl = (uint16_t)s_devPubLen; resp.push_back((char)(dpl & 0xFF)); resp.push_back((char)(dpl >> 8));
+      resp.append((const char*)s_devPubBuf, s_devPubLen);
       uint16_t sl = (uint16_t)sigOutLen; resp.push_back((char)(sl & 0xFF)); resp.push_back((char)(sl >> 8));
       resp.append((const char*)sigOut, sigOutLen);
       if (g_cSrvHello) { g_cSrvHello->setValue(resp); g_cSrvHello->notify(); }

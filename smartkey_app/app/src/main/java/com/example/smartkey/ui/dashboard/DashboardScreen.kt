@@ -1,5 +1,6 @@
 ﻿package com.example.smartkey.ui.dashboard
 
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,18 +28,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.smartkey.card.ProvisioningManager
+import com.example.smartkey.data.UserRepository
 import com.example.smartkey.data.Vehicle
 import com.example.smartkey.ui.location.LocationScreen
 import com.example.smartkey.ui.profile.UserInfoScreen
 import com.example.smartkey.ui.vehicles.VehicleListViewModel
 import com.example.smartkey.ui.vehicles.VehiclesScreen
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 
 enum class DrawerDestination(val label: String) {
@@ -59,6 +65,21 @@ fun DashboardScreen(
     val drawerState: DrawerState = rememberDrawerState(DrawerValue.Closed)
     var selected by remember { mutableStateOf(DrawerDestination.OWNED) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+        val publicKeyHex = ProvisioningManager(context.applicationContext)
+            .getPublicKey65()
+            ?.joinToString("") { "%02X".format(it) }
+            .orEmpty()
+
+        if (publicKeyHex.isNotEmpty()) {
+            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+            val deviceId = "android_${androidId ?: "unknown"}"
+            runCatching { UserRepository().updateDigitalKeyMaterial(uid, publicKeyHex, deviceId) }
+        }
+    }
 
     val drawerItems = listOf(
         DrawerDestination.PROFILE,

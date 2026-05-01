@@ -1,9 +1,13 @@
 package com.example.smartkey.ui.vehicles
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -21,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.PinDrop
@@ -31,9 +37,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +61,12 @@ import com.example.smartkey.data.Vehicle
 import com.example.smartkey.data.VehicleRepository
 import com.example.smartkey.security.SecurityService
 import com.example.smartkey.ui.common.SecurityVerificationDialog
+import com.example.smartkey.ble.BleAutoConnectService
+import com.example.smartkey.ble.BleManager
+import com.example.smartkey.ui.ble.BleViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 @Composable
@@ -65,15 +78,38 @@ fun VehicleDetailScreen(
     shareRepository: ShareRepository = ShareRepository()
 ) {
     val vehicle by repo.vehicleFlow(vehicleId).collectAsState(initial = null)
-    val shares by shareRepository.sharesOfVehicle(vehicleId).collectAsState(initial = emptyList())
     val context = LocalContext.current
+    val currentUid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+    val mySharesFlow = remember(currentUid) {
+        if (currentUid.isBlank()) flowOf(emptyList()) else shareRepository.sharesFor(currentUid)
+    }
+    val myShares by mySharesFlow.collectAsState(initial = emptyList())
+    val myShare = myShares.firstOrNull { it.vehicleId == vehicleId }
+    val isOwner = vehicle?.ownerUid == currentUid
+    val canAdminister = isOwner || (myShare?.canAdmin == true)
+    val sharesFlow = remember(vehicleId, canAdminister) {
+        if (canAdminister) shareRepository.sharesOfVehicle(vehicleId) else flowOf(emptyList())
+    }
+    val shares by sharesFlow.collectAsState(initial = emptyList())
     val scrollState = rememberScrollState()
     val vehiclesVm: VehicleListViewModel = viewModel()
+    val bleVm: BleViewModel = viewModel()
     var showShareDialog by remember { mutableStateOf(false) }
     var pendingShare by remember { mutableStateOf<DetailShareRequest?>(null) }
     var pendingLockAction by remember { mutableStateOf<LockAction?>(null) }
     var lockInProgress by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    // Pre-cache vehicle isActive so HCE can do tap-to-act without requiring explicit Lock/Unlock press
+    LaunchedEffect(vehicle) {
+        vehicle?.let { v ->
+            val ecuId = v.ecuVehicleId.trim().uppercase().replace(Regex("[^0-9A-F]"), "")
+            context.getSharedPreferences("hce_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean("cached_vehicle_is_active", v.isActive)
+                .putString("cached_vehicle_ecu_id", ecuId)
+                .apply()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -92,6 +128,9 @@ fun VehicleDetailScreen(
                 VehicleHeroCard(current)
                 ActionButtonsRow(
                     isActive = current.isActive,
+                    canShare = canAdminister,
+                    canLock = isOwner || (myShare?.canLock == true),
+                    canUnlock = isOwner || (myShare?.canUnlock == true),
                     onShare = { showShareDialog = true },
                     onLock = { pendingLockAction = LockAction.Lock },
                     onUnlock = { pendingLockAction = LockAction.Unlock },
@@ -99,10 +138,15 @@ fun VehicleDetailScreen(
                 )
                 VehicleLocationCard(vehicle = current, context = context)
                 HceSection(vehicle = current, token = token, context = context)
-                AccessorsSection(
-                    shares = shares,
-                    onRevoke = { share -> vehiclesVm.revokeShare(share) }
-                )
+                BleSection(vehicle = current, context = context, bleVm = bleVm)
+                if (canAdminister) {
+                    AccessorsSection(
+                        shares = shares,
+                        onRevoke = { share -> vehiclesVm.revokeShare(share) }
+                    )
+                } else {
+                    MyAccessSection(myShare)
+                }
                 Spacer(Modifier.height(8.dp))
             } ?: Text("Đang tải thông tin xe...", style = MaterialTheme.typography.bodyMedium)
         }
@@ -113,8 +157,8 @@ fun VehicleDetailScreen(
             ShareVehicleDialog(
                 vehicle = current,
                 onDismiss = { showShareDialog = false },
-                onSubmit = { email, hours, unlimited ->
-                    pendingShare = DetailShareRequest(current, email, hours, unlimited)
+                onSubmit = { email, hours, unlimited, permission ->
+                    pendingShare = DetailShareRequest(current, email, hours, unlimited, permission)
                     showShareDialog = false
                 }
             )
@@ -125,9 +169,9 @@ fun VehicleDetailScreen(
         SecurityVerificationDialog(
             title = "Xác thực chia sẻ xe",
             description = if (request.unlimited) {
-                "Chia sẻ không giới hạn cho ${request.email}. Nhập lại mật khẩu và xác nhận vân tay."
+                "Chia sẻ ${request.permission.title.lowercase()} không giới hạn cho ${request.email}. Nhập lại mật khẩu và xác nhận vân tay."
             } else {
-                "Nhập lại mật khẩu và xác nhận vân tay trước khi chia sẻ xe cho ${request.email}."
+                "Nhập lại mật khẩu và xác nhận vân tay trước khi chia sẻ ${request.permission.title.lowercase()} cho ${request.email}."
             },
             confirmLabel = "Chia sẻ",
             onDismiss = { pendingShare = null },
@@ -137,7 +181,9 @@ fun VehicleDetailScreen(
                     targetEmail = request.email,
                     durationHours = request.hours,
                     unlimited = request.unlimited,
-                    password = password
+                    permissions = request.permission.value,
+                    password = password,
+                    appContext = context.applicationContext
                 )
                 pendingShare = null
             }
@@ -159,27 +205,47 @@ fun VehicleDetailScreen(
                 requireBiometric = true,
                 autoConfirmOnBiometric = true,
                 onVerified = { password ->
+                    val setActive = action == LockAction.Unlock
+                    val prefs = context.getSharedPreferences("hce_prefs", Context.MODE_PRIVATE)
+                    val nowMs = System.currentTimeMillis()
+                    val ecuVehicleId = current.ecuVehicleId
+                        .trim()
+                        .uppercase()
+                        .replace(Regex("[^0-9A-F]"), "")
+                    val queuedOk = if (setActive) {
+                        prefs.edit()
+                            .putString("vehicle_id", current.id)
+                            .putString("vehicle_token", token)
+                            .putString("pending_action", "2") // 2 = UNLOCK -> LED ON
+                            .putLong("pending_action_set_at_ms", nowMs)
+                            .putString("pending_action_vehicle_ecu_id", ecuVehicleId)
+                            .commit()
+                    } else {
+                        prefs.edit()
+                            .putString("pending_action", "1") // 1 = LOCK -> LED OFF
+                            .putLong("pending_action_set_at_ms", nowMs)
+                            .putString("pending_action_vehicle_ecu_id", ecuVehicleId)
+                            .commit()
+                    }
+
+                    if (!queuedOk) {
+                        Toast.makeText(context, "Không thể queue lệnh NFC", Toast.LENGTH_SHORT).show()
+                        pendingLockAction = null
+                        return@SecurityVerificationDialog
+                    }
+
                     lockInProgress = true
                     scope.launch {
                         try {
-                            val setActive = action == LockAction.Unlock
                             if (!setActive && password.isNotBlank()) {
                                 SecurityService.reauthenticate(password)
                             }
+
                             repo.setVehicleActive(current.id, setActive)
+
                             if (setActive) {
-                                val prefs = context.getSharedPreferences("hce_prefs", Context.MODE_PRIVATE)
-                                prefs.edit()
-                                    .putString("vehicle_id", current.id)
-                                    .putString("vehicle_token", token)
-                                    .putString("pending_action", "2") // 2 = UNLOCK -> LED ON
-                                    .apply()
                                 Toast.makeText(context, "Đã gửi thông tin mở khóa qua HCE", Toast.LENGTH_SHORT).show()
                             } else {
-                                val prefs = context.getSharedPreferences("hce_prefs", Context.MODE_PRIVATE)
-                                prefs.edit()
-                                    .putString("pending_action", "1") // 1 = LOCK -> LED OFF
-                                    .apply()
                                 Toast.makeText(context, "Đã khóa xe ${current.name}", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
@@ -314,7 +380,7 @@ private fun HceSection(vehicle: Vehicle, token: String, context: Context) {
 
     InfoSectionCard(title = "Cấu hình HCE", icon = Icons.Rounded.PinDrop) {
         Text("Xe: ${vehicle.name} • TB Token: ${token.takeIf { it.isNotBlank() } ?: "Chưa có"}")
-        Text("AID hiện tại: F00102030405", style = MaterialTheme.typography.bodyMedium)
+        Text("AID: D27600008543434301 (CCC-style)", style = MaterialTheme.typography.bodyMedium)
         Text("Trạng thái: $status", style = MaterialTheme.typography.bodySmall)
         Button(
             enabled = !isSaving,
@@ -335,6 +401,199 @@ private fun HceSection(vehicle: Vehicle, token: String, context: Context) {
                 persist(password)
             }
         )
+    }
+}
+
+@Composable
+private fun BleSection(vehicle: Vehicle, context: Context, bleVm: BleViewModel) {
+    val state by bleVm.state.collectAsState()
+
+    // Lưu trạng thái auto-connect per-vehicle trong SharedPreferences
+    val blePrefs = remember { context.getSharedPreferences("ble_prefs", Context.MODE_PRIVATE) }
+    var autoConnect by remember { mutableStateOf(blePrefs.getBoolean("autoconnect_${vehicle.id}", false)) }
+
+    // Đặt target device khi vào màn hình xe
+    LaunchedEffect(vehicle.bleDeviceName) {
+        BleManager.get(context).setTargetDevice(vehicle.bleDeviceName)
+    }
+
+    // Auto-start service nếu đã bật trước đó và xe đã được provisioned
+    LaunchedEffect(vehicle.id, autoConnect) {
+        if (autoConnect && vehicle.ecuVehicleId.isNotBlank()) {
+            bleVm.startAutoConnect()
+        }
+    }
+
+    // Permission launcher để yêu cầu quyền BLE khi bật toggle
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val granted = results.values.all { it }
+        if (granted) {
+            bleVm.startAutoConnect()
+        } else {
+            autoConnect = false
+            blePrefs.edit().putBoolean("autoconnect_${vehicle.id}", false).apply()
+        }
+    }
+
+    val connText = when (state.conn) {
+        BleManager.ConnState.IDLE -> "Chưa kết nối"
+        BleManager.ConnState.SCANNING -> "Đang quét ECU..."
+        BleManager.ConnState.CONNECTING -> "Đang kết nối..."
+        BleManager.ConnState.CONNECTED -> "Đã kết nối"
+        BleManager.ConnState.DISCONNECTED -> "Mất kết nối"
+        else -> "Không xác định"
+    }
+    val statusColor = when (state.conn) {
+        BleManager.ConnState.CONNECTED -> android.graphics.Color.rgb(76, 175, 80)
+        else -> null
+    }
+
+    InfoSectionCard(title = "BLE — Passive Entry", icon = Icons.Default.Bluetooth) {
+        // Trạng thái kết nối
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(
+                        color = if (state.conn == BleManager.ConnState.CONNECTED)
+                            Color(0xFF4CAF50)
+                        else if (state.conn == BleManager.ConnState.SCANNING || state.conn == BleManager.ConnState.CONNECTING)
+                            MaterialTheme.colorScheme.tertiary
+                        else
+                            MaterialTheme.colorScheme.outline,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+            Text(connText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        }
+
+        // RSSI + passive entry state khi đang kết nối
+        if (state.conn == BleManager.ConnState.CONNECTED && state.session == BleManager.SessionState.READY) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val rssiColor = when {
+                    state.rssi >= -70 -> Color(0xFF4CAF50)  // xanh lá: đủ gần
+                    state.rssi >= -80 -> Color(0xFFFF9800)  // cam: trung bình
+                    else              -> MaterialTheme.colorScheme.outline
+                }
+                Icon(
+                    imageVector = Icons.Default.Bluetooth,
+                    contentDescription = null,
+                    tint = rssiColor,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = "RSSI: ${if (state.rssi != 0) "${state.rssi} dBm" else "—"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = rssiColor
+                )
+                if (state.proximityUnlocked) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "🔓 Passive Entry ON",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF4CAF50)
+                    )
+                }
+            }
+
+            // UWB distance row
+            if (state.uwbEnabled || state.uwbDistance >= 0f) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val uwbColor = when {
+                        state.uwbDistance in 0f..1.5f  -> Color(0xFF4CAF50)
+                        state.uwbDistance in 1.5f..2.5f -> Color(0xFFFF9800)
+                        state.uwbDistance > 2.5f        -> MaterialTheme.colorScheme.error
+                        else                            -> MaterialTheme.colorScheme.outline
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Bluetooth,
+                        contentDescription = null,
+                        tint = uwbColor,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "UWB: ${if (state.uwbDistance >= 0f) "${"%.2f".format(state.uwbDistance)} m" else "—"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = uwbColor
+                    )
+                    if (state.uwbDistance in 0f..1.5f) {
+                        Text(
+                            text = "📡 Trong vùng",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF4CAF50)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Toggle tự động kết nối
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Tự động kết nối nền", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    "ECU: ${vehicle.bleDeviceName.ifBlank { BleManager.DEFAULT_DEVICE_NAME }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = autoConnect,
+                onCheckedChange = { enabled ->
+                    if (enabled) {
+                        autoConnect = true
+                        blePrefs.edit().putBoolean("autoconnect_${vehicle.id}", true).apply()
+                        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            arrayOf(
+                                Manifest.permission.BLUETOOTH_SCAN,
+                                Manifest.permission.BLUETOOTH_CONNECT,
+                                Manifest.permission.ACCESS_FINE_LOCATION
+                            )
+                        } else {
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                        }
+                        permLauncher.launch(perms)
+                    } else {
+                        autoConnect = false
+                        blePrefs.edit().putBoolean("autoconnect_${vehicle.id}", false).apply()
+                        bleVm.stopAutoConnect()
+                    }
+                }
+            )
+        }
+
+    
+    }
+}
+
+@Composable
+private fun MyAccessSection(share: SharedVehicle?) {
+    InfoSectionCard(title = "Quyền của bạn", icon = Icons.Rounded.DirectionsCar) {
+        if (share == null) {
+            Text("Bạn đang xem xe được chia sẻ, nhưng ứng dụng chưa nhận được metadata quyền truy cập.", style = MaterialTheme.typography.bodyMedium)
+        } else {
+            Text("Quyền hiện tại: ${share.permissionLabel}", style = MaterialTheme.typography.bodyMedium)
+            Text("Hiệu lực đến: ${formatExpiration(share.expiresAt)}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                if (share.canAdmin) {
+                    "Bạn có thể khóa, mở khóa và chia sẻ tiếp quyền truy cập này."
+                } else {
+                    "Bạn có thể thao tác xe trong phạm vi quyền được cấp; các tác vụ quản trị vẫn thuộc chủ xe."
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }
 
@@ -360,6 +619,7 @@ private fun AccessorsSection(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text("• ${share.granteeIdentifier}", fontWeight = FontWeight.Medium)
+                            Text("Quyền: ${share.permissionLabel}", style = MaterialTheme.typography.bodySmall)
                             Text("Hết hạn: ${formatExpiration(share.expiresAt)}", style = MaterialTheme.typography.bodySmall)
                             if (onRevoke != null) {
                                 TextButton(onClick = { onRevoke(share) }) {
@@ -444,6 +704,9 @@ private fun formatCoordinate(value: Double): String =
 @Composable
 private fun ActionButtonsRow(
     isActive: Boolean,
+    canShare: Boolean,
+    canLock: Boolean,
+    canUnlock: Boolean,
     onShare: () -> Unit,
     onLock: () -> Unit,
     onUnlock: () -> Unit,
@@ -455,20 +718,21 @@ private fun ActionButtonsRow(
     ) {
         OutlinedButton(
             onClick = onShare,
+            enabled = canShare,
             modifier = Modifier.weight(1f)
         ) {
             Text("Chia sẻ")
         }
         Button(
             onClick = onLock,
-            enabled = isActive && !lockInProgress,
+            enabled = canLock && isActive && !lockInProgress,
             modifier = Modifier.weight(1f)
         ) {
             Text("Khóa xe")
         }
         Button(
             onClick = onUnlock,
-            enabled = !isActive && !lockInProgress,
+            enabled = canUnlock && !isActive && !lockInProgress,
             modifier = Modifier.weight(1f)
         ) {
             Text("Mở khóa")
@@ -482,5 +746,6 @@ private data class DetailShareRequest(
     val vehicle: Vehicle,
     val email: String,
     val hours: Int,
-    val unlimited: Boolean
+    val unlimited: Boolean,
+    val permission: SharePermissionOption
 )

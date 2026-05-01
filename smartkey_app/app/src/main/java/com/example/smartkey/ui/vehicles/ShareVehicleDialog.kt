@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,11 +28,12 @@ import com.example.smartkey.data.Vehicle
 fun ShareVehicleDialog(
     vehicle: Vehicle,
     onDismiss: () -> Unit,
-    onSubmit: (email: String, durationHours: Int, unlimited: Boolean) -> Unit
+    onSubmit: (email: String, durationHours: Int, unlimited: Boolean, permission: SharePermissionOption) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var duration by remember { mutableStateOf("24") }
     var unlimited by remember { mutableStateOf(false) }
+    var permission by remember { mutableStateOf(SharePermissionOption.VALET) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -73,6 +75,21 @@ fun ShareVehicleDialog(
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("Quyền truy cập", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                SharePermissionOption.values().forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        RadioButton(
+                            selected = permission == option,
+                            onClick = { permission = option }
+                        )
+                        Column {
+                            Text(option.title, style = MaterialTheme.typography.bodyMedium)
+                            Text(option.description, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -80,7 +97,7 @@ fun ShareVehicleDialog(
                 enabled = email.isNotBlank(),
                 onClick = {
                     val hours = duration.toIntOrNull() ?: 24
-                    onSubmit(email.trim(), hours, unlimited)
+                    onSubmit(email.trim(), hours, unlimited, permission)
                 }
             ) {
                 Text("Chia sẻ")
@@ -90,4 +107,11 @@ fun ShareVehicleDialog(
             TextButton(onClick = onDismiss) { Text("Huỷ") }
         }
     )
+}
+
+enum class SharePermissionOption(val value: Int, val title: String, val description: String) {
+    FULL(0xFF, "Toàn quyền", "Khóa, mở khóa và toàn bộ quyền của chủ xe."),
+    VALET(0x03, "Valet", "Chỉ được khóa và mở khóa xe."),
+    UNLOCK_ONLY(0x01, "Chỉ mở khóa", "Cho phép mở khóa nhưng không được khóa."),
+    LOCK_ONLY(0x02, "Chỉ khóa", "Cho phép khóa nhưng không được mở khóa.")
 }

@@ -1,5 +1,6 @@
 #include "fsm_integration.h"
 #include "fsm.h"
+#include "nfc_session.h"   // NfcSession::setPersistentForce
 #include <Arduino.h>
 
 namespace FSMIntegration {
@@ -126,3 +127,22 @@ namespace SerialCmd {
 }
 
 } // namespace FSMIntegration
+
+// ---- UWB namespace ----
+// Đặt ngoài namespace FSMIntegration để khớp với khai báo trong header
+namespace FSMIntegration::UWB {
+
+  void onInRange() {
+    Serial.println("[FSM-INT/UWB] Key fob IN range — unlock");
+    // Đánh dấu đưa ra FSM (dùng UNLOCK_REQUESTED giống BLE passive entry)
+    NfcSession::setPersistentForce(true);
+    FSM::triggerEvent(FSM::UNLOCK_REQUESTED);
+  }
+
+  void onOutOfRange() {
+    Serial.println("[FSM-INT/UWB] Key fob OUT of range — lock");
+    NfcSession::setPersistentForce(false);
+    // Không trigger FSM event riêng; GPIO được control trực tiếp qua setPersistentForce(false)
+  }
+
+}

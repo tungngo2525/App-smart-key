@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isVehicleOwner(vehicleData) {
+      return isSignedIn() && vehicleData.profile.ownerUid == request.auth.uid;
+    }
+
+    function isVehicleOwnerById(vehicleId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/vehicles/$(vehicleId)) &&
+        get(/databases/$(database)/documents/vehicles/$(vehicleId)).data.profile.ownerUid == request.auth.uid;
+    }
+
+    function isVehicleRecipient(vehicleId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/shareLookup/$(vehicleId)/recipients/$(request.auth.uid));
+    }
+
+    function recipientShare(vehicleId) {
+      return get(/databases/$(database)/documents/shareLookup/$(vehicleId)/recipients/$(request.auth.uid)).data;
+    }
+
+    function recipientPermissionMask(vehicleId) {
+      return recipientShare(vehicleId).permissions is int
+        ? recipientShare(vehicleId).permissions
+        : (
+            recipientShare(vehicleId).role == 'FULL' ? 255 :
+            recipientShare(vehicleId).role == 'VALET' ? 3 :
+            recipientShare(vehicleId).role == 'UNLOCK_ONLY' ? 1 :
+            recipientShare(vehicleId).role == 'LOCK_ONLY' ? 2 : 0
+          );
+    }
+
+    function isActiveRecipient(vehicleId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/shareLookup/$(vehicleId)/recipients/$(request.auth.uid)) &&
+        recipientShare(vehicleId).status == 'active' &&
+        (
+          !('expiresAt' in recipientShare(vehicleId)) ||
+          recipientShare(vehicleId).expiresAt <= 0 ||
+          recipientShare(vehicleId).expiresAt > request.time.toMillis()
+        );
+    }
+
+    function isVehicleAdmin(vehicleId) {
+      return isActiveRecipient(vehicleId) &&
+        (
+          recipientShare(vehicleId).role == 'FULL' ||
+          recipientPermissionMask(vehicleId) == 255
+        );
+    }
+
+    function canOperateVehicle(vehicleId, nextActive) {
+      return isActiveRecipient(vehicleId) && (
+        recipientPermissionMask(vehicleId) == 255 ||
+        (nextActive == true && (recipientPermissionMask(vehicleId) == 3 || recipientPermissionMask(vehicleId) == 1)) ||
+        (nextActive == false && (recipientPermissionMask(vehicleId) == 3 || recipientPermissionMask(vehicleId) == 2))
+      );
+    }
+
+    function isOnlyVehicleActiveChange() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['profile']) &&
+        request.resource.data.profile.diff(resource.data.profile).affectedKeys().hasOnly(['active']);
+    }
+
+    match /users/{userId} {
+      allow read, write: if isSelf(userId);
+
+      match /devices/{deviceId} {
+        allow read, write: if isSelf(userId);
+      }
+
+      match /tokens/{tokenId} {
+        allow read, write: if isSelf(userId);
+      }
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read: if isVehicleOwner(resource.data) || isVehicleRecipient(vehicleId);
+      allow create: if isSignedIn() && request.resource.data.profile.ownerUid == request.auth.uid;
+      allow update: if isVehicleOwner(resource.data) ||
+        (isOnlyVehicleActiveChange() && canOperateVehicle(vehicleId, request.resource.data.profile.active));
+      allow delete: if isVehicleOwner(resource.data);
+
+      match /credentials/{credentialId} {
+        allow read: if isVehicleOwnerById(vehicleId) || isVehicleRecipient(vehicleId);
+        allow create, update, delete: if isVehicleOwnerById(vehicleId);
+      }
+
+      match /syncQueue/{eventId} {
+        allow read: if false;
+        allow create, update, delete: if isVehicleOwnerById(vehicleId);
+      }
+    }
+
+    match /shares/{shareId} {
+      allow read: if isSignedIn() && (
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.granteeUid == request.auth.uid ||
+        isVehicleAdmin(resource.data.vehicleId)
+      );
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /shareLookup/{vehicleId}/recipients/{recipientUid} {
+      allow read: if isSelf(recipientUid) || isVehicleOwnerById(vehicleId) || isVehicleAdmin(vehicleId);
+      allow create, update, delete: if isVehicleOwnerById(vehicleId);
+    }
+
+    match /shareRequests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.targetUid == request.auth.uid ||
+        isVehicleAdmin(resource.data.vehicleId)
+      );
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+  }
+}

@@ -7,7 +7,10 @@
         android:category="other"
         android:description="@string/app_name">
 
-        <!-- AID từ IoT code: F00102030405 (6 bytes) -->
-        <aid-filter android:name="F00102030405" />
+        <!-- CCC Digital Key R3 AID: D2760000850101
+             RID D276000085 (Bundesdruckerei GmbH - CCC registered)
+             PIX 0101 (Digital Key service identifier)
+             INS 0x88 (INTERNAL_AUTHENTICATE) used for challenge-response -->
+        <aid-filter android:name="D2760000850101" />
     </aid-group>
 </host-apdu-service>

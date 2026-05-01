@@ -10,6 +10,9 @@
 #include "ble/ble_admin.h"
 #include "ble/ble_auth.h"
 #include "ble/ble_echo.h"
+#include "fsm_integration.h"
+#include "nfc_session.h"   // NfcSession::setPersistentForce — auto-lock on BLE disconnect
+#include "uwb_ranging.h"  // UWBRanging::enable/disable on BLE connect/disconnect
 
 namespace {
   // Device name and services
@@ -38,11 +41,20 @@ namespace BLEMod {
     class ServerCallbacks : public NimBLEServerCallbacks {
       void onConnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& /*connInfo*/) override {
         Serial.println("[BLE] Central connected. Keeping advertising active.");
+        FSMIntegration::BLE::onClientConnected();
         NimBLEDevice::startAdvertising();
+        // Phase C: enable UWB ranging khi BLE auth session sắp bắt đầu
+        // (UWBRanging::enable() sẽ gọi lại sau khi handshake xong qua AdminInfo)
       }
       void onDisconnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& /*connInfo*/, int reason) override {
-        Serial.printf("[BLE] Central disconnected (reason=%d). Restarting advertising and resetting session.\n", reason);
+        Serial.printf("[BLE] Central disconnected (reason=%d). Auto-locking and resetting session.\n", reason);
+        // Auto-lock: đảm bảo xe luôn lòa khi BLE ngắt kết nối
+        NfcSession::setPersistentForce(false);
+        // Disable UWB ranging — không cần range khi không có BLE session
+        UWBRanging::disable();
         BLEAuth::resetSession();
+        BLEAdmin::resetSession();
+        FSMIntegration::BLE::onClientDisconnected();
         NimBLEDevice::startAdvertising();
       }
     };

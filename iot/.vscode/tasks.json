@@ -95,7 +95,7 @@
 		{
 			"label": "PlatformIO: Build (modularized)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -108,7 +108,7 @@
 		{
 			"label": "PlatformIO: Build (fix redefs)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -121,7 +121,7 @@
 		{
 			"label": "PlatformIO: Build (fix externs)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -134,7 +134,7 @@
 		{
 			"label": "PlatformIO: Build (fix LED_PIN linkage)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -147,7 +147,7 @@
 		{
 			"label": "PlatformIO: Build (NFC no IRQ)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -160,7 +160,7 @@
 		{
 			"label": "PlatformIO: Build (NFC auto-recover)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -173,7 +173,7 @@
 		{
 			"label": "PlatformIO: Build (final NFC robustness)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -186,7 +186,7 @@
 		{
 			"label": "Build firmware after serial tweaks",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -198,7 +198,7 @@
 		{
 			"label": "Upload and open monitor (follow port)",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run",
 				"--target",
@@ -206,7 +206,7 @@
 				"--upload-port",
 				"COM9",
 				";",
-				"C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+				"C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 				"device",
 				"monitor"
 			],
@@ -219,7 +219,7 @@
 		{
 			"label": "Build after provisioning/NFC reorder",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -231,7 +231,7 @@
 		{
 			"label": "Build after NFC log throttling",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -243,7 +243,7 @@
 		{
 			"label": "Build after adding tag auth",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -255,7 +255,7 @@
 		{
 			"label": "Build after suppressing NOT_FOUND spam",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -267,7 +267,7 @@
 		{
 			"label": "Build after admin/tag management",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -279,7 +279,7 @@
 		{
 			"label": "Build after adding BLE admin service",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -291,7 +291,7 @@
 		{
 			"label": "Build after wiring admin modes into NFC",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -303,7 +303,7 @@
 		{
 			"label": "PlatformIO: Build iot env",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -315,7 +315,7 @@
 		{
 			"label": "Build with BLE/NFC yield coordination",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -324,7 +324,7 @@
 		{
 			"label": "Build with proper mutex coordination",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -333,7 +333,7 @@
 		{
 			"label": "Build with SELECT AID retry reliability",
 			"type": "shell",
-			"command": "C:\\Users\\thuan\\.platformio\\penv\\Scripts\\platformio.exe",
+			"command": "C:\\Users\\tungn\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
@@ -341,3 +341,6 @@
 		}
 	]
 }
+
+
+

@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -76,9 +77,15 @@ fun VehiclesScreen(
     contentPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val ui by vm.ui.collectAsState()
+    val context = LocalContext.current
     var showAdd by remember { mutableStateOf(false) }
     var vehicleForShare by remember { mutableStateOf<Vehicle?>(null) }
     var pendingShare by remember { mutableStateOf<PendingShareRequest?>(null) }
+    // ID của xe mà người dùng đã bấm "Để sau" trong session này
+    var dismissedSetupId by remember { mutableStateOf<String?>(null) }
+
+    // Tự động hiển thị dialog setup cho vehicle đầu tiên cần setup (chưa bị dismiss)
+    val vehicleNeedsSetup = ui.owned.firstOrNull { it.needsSetup && it.id != dismissedSetupId }
 
     Scaffold(
         topBar = {
@@ -150,6 +157,7 @@ fun VehiclesScreen(
                                         name = shared.name,
                                         plate = shared.plate,
                                         tbDeviceId = shared.tbDeviceId,
+                                        ecuVehicleId = shared.ecuVehicleId,
                                         location = shared.location,
                                         isActive = shared.isActive,
                                         latitude = shared.latitude,
@@ -182,6 +190,17 @@ fun VehiclesScreen(
         }
     }
 
+    // Dialog thiết lập xe mới từ ECU (tự động hiện khi detect needsSetup=true)
+    vehicleNeedsSetup?.let { vehicle ->
+        SetupVehicleDialog(
+            vehicle = vehicle,
+            onDismiss = { dismissedSetupId = vehicle.id },
+            onSubmit = { vehicleId, name, plate, location ->
+                vm.completeSetup(vehicleId, name, plate, location)
+            }
+        )
+    }
+
     if (allowAdd && showAdd) {
         AddVehicleDialog(
             onDismiss = { showAdd = false },
@@ -197,8 +216,8 @@ fun VehiclesScreen(
             ShareVehicleDialog(
                 vehicle = vehicle,
                 onDismiss = { vehicleForShare = null },
-                onSubmit = { email, hours, unlimited ->
-                    pendingShare = PendingShareRequest(vehicle, email, hours, unlimited)
+                onSubmit = { email, hours, unlimited, permission ->
+                    pendingShare = PendingShareRequest(vehicle, email, hours, unlimited, permission)
                     vehicleForShare = null
                 }
             )
@@ -209,9 +228,9 @@ fun VehiclesScreen(
         SecurityVerificationDialog(
             title = "Xác thực chia sẻ xe",
             description = if (request.unlimited) {
-                "Chia sẻ không giới hạn cho ${request.email}. Nhập lại mật khẩu và xác nhận vân tay."
+                "Chia sẻ ${request.permission.title.lowercase()} không giới hạn cho ${request.email}. Nhập lại mật khẩu và xác nhận vân tay."
             } else {
-                "Nhập lại mật khẩu và xác nhận vân tay trước khi chia sẻ xe cho ${request.email}."
+                "Nhập lại mật khẩu và xác nhận vân tay trước khi chia sẻ ${request.permission.title.lowercase()} cho ${request.email}."
             },
             confirmLabel = "Chia sẻ",
             onDismiss = { pendingShare = null },
@@ -221,7 +240,9 @@ fun VehiclesScreen(
                     targetEmail = request.email,
                     durationHours = request.hours,
                     unlimited = request.unlimited,
-                    password = password
+                    permissions = request.permission.value,
+                    password = password,
+                    appContext = context.applicationContext
                 )
                 pendingShare = null
             }
@@ -270,6 +291,20 @@ private fun VehicleRow(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (v.ecuVehicleId.isNotBlank()) {
+                            Text(
+                                "🔑 ECU ID: ${v.ecuVehicleId}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Text(
+                                "⚠️ Chưa liên kết với ECU (tap NFC để liên kết)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         if (v.location.isNotBlank()) {
                             Text(
                                 "Vị trí: ${v.location}",
@@ -355,6 +390,13 @@ private fun SharedVehicleRow(shared: SharedVehicle, onClick: () -> Unit) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(shared.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Biển số: ${shared.plate}", style = MaterialTheme.typography.bodyMedium)
+                        if (shared.ecuVehicleId.isNotBlank()) {
+                            Text(
+                                "🔑 ECU ID: ${shared.ecuVehicleId}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                            )
+                        }
                         Text(
                             "Chủ xe: ${shared.ownerUsername.ifBlank { "Không rõ" }}",
                             style = MaterialTheme.typography.bodySmall
@@ -470,6 +512,62 @@ private val sharedCardColors = listOf(
     Color(0xFFEFF5FF),
     Color(0xFFDCEAFF)
 )
+
+@Composable
+private fun SetupVehicleDialog(
+    vehicle: Vehicle,
+    onDismiss: () -> Unit,
+    onSubmit: (vehicleId: String, name: String, plate: String, location: String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var plate by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("❗ Thiết lập xe mới") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Phát hiện xe mới từ ECU:\n🔑 ID: ${vehicle.ecuVehicleId.take(16)}...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Tên xe *") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
+                OutlinedTextField(
+                    value = plate,
+                    onValueChange = { plate = it },
+                    label = { Text("Biển số *") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
+                OutlinedTextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("Vị trí xe (VD: Nhà, Công ty) *") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank() && plate.isNotBlank() && location.isNotBlank(),
+                onClick = {
+                    onSubmit(vehicle.id, name.trim(), plate.trim(), location.trim())
+                }
+            ) { Text("Lưu") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Để sau") } }
+    )
+}
 
 @Composable
 private fun AddVehicleDialog(
@@ -592,5 +690,6 @@ private data class PendingShareRequest(
     val vehicle: Vehicle,
     val email: String,
     val hours: Int,
-    val unlimited: Boolean
+    val unlimited: Boolean,
+    val permission: SharePermissionOption
 )

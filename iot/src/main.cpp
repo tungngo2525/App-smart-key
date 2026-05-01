@@ -2,7 +2,9 @@
 #include "fsm.h"
 #include "fsm_integration.h"
 #include "nfc_session.h"
+#include "cloud_sync.h"
 #include "ble/ble.h"
+#include "uwb_ranging.h"
 
 void handleSerialCommands();
 
@@ -24,12 +26,24 @@ void setup() {
   
   Serial.println("[MAIN] Initializing FSM...");
   FSM::begin();
+
+  Serial.println("[MAIN] Initializing cloud sync...");
+  CloudSync::begin();
+
+  Serial.println("[MAIN] Initializing BLE...");
+  BLEMod::begin();
+
+  Serial.println("[MAIN] Initializing UWB (DW1000)...");
+  UWBRanging::begin();
   
   Serial.println("[MAIN] System ready! Press 'h' for help\n");
 }
 
 void loop() {
   FSM::tick();
+  NfcSession::tick();
+  CloudSync::tick();
+  UWBRanging::tick();
   handleSerialCommands();
 }
 
@@ -58,6 +72,13 @@ void handleSerialCommands() {
     case 'C':
       FSMIntegration::SerialCmd::clearAll();
       break;
+    case 'w':
+      CloudSync::printStatus();
+      break;
+    case 'W':
+      Serial.println("[MAIN] Forcing cloud sync now...");
+      CloudSync::requestSyncNow();
+      break;
     case 'h':
       Serial.println("\n=== Commands ===");
       Serial.println("s - FSM status");
@@ -66,6 +87,8 @@ void handleSerialCommands() {
       Serial.println("F - Arm one-shot force");
       Serial.println("r - Clear keys");
       Serial.println("C - Clear all");
+      Serial.println("w - Cloud sync status");
+      Serial.println("W - Force cloud sync");
       Serial.println("u - Test unlock");
       Serial.println("h - Help\n");
       break;

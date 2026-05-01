@@ -1,10 +1,14 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <string>
+#include <cstring>
 
 #include "../../include/ble/ble_admin.h"
+#include "../../include/ble/ble_auth.h"
+#include "../../include/ble/utils/crypto_utils.h"
 #include "provisioning_phase.h"
 #include "../../include/nfc_session.h"
+#include "../../include/uwb_ranging.h"
 
 
 namespace {
@@ -19,6 +23,50 @@ namespace {
   BLEMod::AdminMode s_adminMode = BLEMod::ADMIN_NORMAL;
   NimBLECharacteristic* g_cAdminMode = nullptr;
   NimBLECharacteristic* g_cAdminInfo = nullptr;
+
+  // CCC R3 Replay Protection: monotonic sequence counters
+  static uint32_t s_txSeq = 0;   // ECU→Android notification counter
+  static uint32_t s_rxSeq = 0;   // Android→ECU command counter
+
+  // Secure notify: AES-256-GCM when BLE session is live, plain text otherwise.
+  // Encrypted format: [0xAE][seq_be4][ciphertext][tag16]
+  // Receiver reconstructs nonce as: [seq_be4][0x00 * 8]
+  static void sendSecureNotify(NimBLECharacteristic* c, const char* msg) {
+    if (!c || !msg) return;
+    const uint8_t* kenc = BLEAuth::sessionEncKey();
+    if (BLEAuth::isSessionReady() && kenc != nullptr) {
+      s_txSeq++;
+      uint8_t nonce[12] = {};
+      nonce[0] = (s_txSeq >> 24) & 0xFF;
+      nonce[1] = (s_txSeq >> 16) & 0xFF;
+      nonce[2] = (s_txSeq >>  8) & 0xFF;
+      nonce[3] = (s_txSeq      ) & 0xFF;
+      const uint8_t aad[3] = { 'A', 'D', 'M' };
+      size_t msgLen = strlen(msg);
+      // buf: [0xAE=1][seq=4][ciphertext=msgLen][tag=16]
+      size_t outLen = 1 + 4 + msgLen + 16;
+      uint8_t* buf = (uint8_t*)malloc(outLen);
+      if (!buf) { c->setValue(msg); c->notify(); return; }
+      buf[0] = 0xAE;
+      buf[1] = nonce[0]; buf[2] = nonce[1]; buf[3] = nonce[2]; buf[4] = nonce[3];
+      uint8_t tag[16];
+      bool ok = aes_gcm_encrypt(kenc, nonce, aad, 3,
+                                (const uint8_t*)msg, msgLen,
+                                buf + 5, tag);
+      if (ok) {
+        memcpy(buf + 5 + msgLen, tag, 16);
+        c->setValue(buf, outLen);
+        c->notify();
+      } else {
+        c->setValue(msg);
+        c->notify();
+      }
+      free(buf);
+    } else {
+      c->setValue(msg);
+      c->notify();
+    }
+  }
 
   // Admin mode characteristic: read/write 1 byte
   class AdminModeCallbacks : public NimBLECharacteristicCallbacks {
@@ -62,44 +110,51 @@ namespace {
       }
       Serial.printf("[BLE-Admin] Cmd write: raw0=0x%02X len=%u parsedHex=%s -> cmd=0x%02X\n", raw0, (unsigned)v.size(), asciiHexParsed?"YES":"NO", cmd);
 
+      // CCC R3 Replay Protection: sequenced secure command [0xAD][seq_be4][cmd_byte]
+      if (v.size() == 6 && static_cast<uint8_t>(v[0]) == 0xAD) {
+        uint32_t rxSeq = ((uint8_t)v[1] << 24) | ((uint8_t)v[2] << 16) |
+                         ((uint8_t)v[3] <<  8) |  (uint8_t)v[4];
+        if (rxSeq <= s_rxSeq) {
+          Serial.printf("[BLE-Admin] REPLAY REJECTED: seq=%u <= last=%u\n", rxSeq, s_rxSeq);
+          sendSecureNotify(_info, "ERR:REPLAY");
+          return;
+        }
+        s_rxSeq = rxSeq;
+        cmd = static_cast<uint8_t>(v[5]);
+        Serial.printf("[BLE-Admin] Seq cmd: seq=%u cmd=0x%02X\n", rxSeq, cmd);
+      }
+
       switch (cmd) {
         case 0x01:
           // Clear phone provisioning only (equivalent to 'r')
           ProvisioningPhase::clearProvisionedOnly();
-          _info->setValue("CLEARED_PROVISIONED");
-          _info->notify();
+          sendSecureNotify(_info, "CLEARED_PROVISIONED");
           break;
         case 0x02:
           // Clear everything, including device keypair (equivalent to 'C')
           ProvisioningPhase::clearAll();
-          _info->setValue("CLEARED_ALL");
-          _info->notify();
+          sendSecureNotify(_info, "CLEARED_ALL");
           break;
         case 0x10:
           // Listing tags not supported in new provisioning module
-          _info->setValue("NOT_SUPPORTED");
-          _info->notify();
+          sendSecureNotify(_info, "NOT_SUPPORTED");
           break;
         case 0x20:
           // Trigger NFC provisioning flow: our NFC loop auto-runs; we just inform the app
-          _info->setValue("NFC_TAP_TO_PROVISION");
-          _info->notify();
+          sendSecureNotify(_info, "NFC_TAP_TO_PROVISION");
           Serial.println("[BLE Admin] Notify: Tap phone at reader to provision.");
           break;
         case 0x30: // Persistent force ON
           NfcSession::setPersistentForce(true);
-          _info->setValue("FORCE_PERSIST_ON");
-          _info->notify();
+          sendSecureNotify(_info, "FORCE_PERSIST_ON");
           break;
         case 0x31: // Persistent force OFF
           NfcSession::setPersistentForce(false);
-          _info->setValue("FORCE_PERSIST_OFF");
-          _info->notify();
+          sendSecureNotify(_info, "FORCE_PERSIST_OFF");
           break;
         case 0x32: // Arm one-shot force
           NfcSession::armOneShotForce();
-          _info->setValue("FORCE_ONESHOT_ARMED");
-          _info->notify();
+          sendSecureNotify(_info, "FORCE_ONESHOT_ARMED");
           break;
         case 0x33: { // Status query
           bool prov = ProvisioningPhase::isProvisioned();
@@ -107,39 +162,85 @@ namespace {
           bool os = NfcSession::isOneShotArmed();
           char buf[48];
           snprintf(buf, sizeof(buf), "STATUS P=%s PF=%s OS=%s", prov?"YES":"NO", pf?"ON":"OFF", os?"ARMED":"NO");
-          _info->setValue(buf);
-          _info->notify();
+          sendSecureNotify(_info, buf);
           Serial.printf("[BLE-Admin] %s\n", buf);
           break; }
         case 0x34: { // Validate cert vs pub
           bool ok = ProvisioningPhase::validateStoredCertMatchesStoredPub();
-          _info->setValue(ok?"CERT_MATCH":"CERT_MISMATCH");
-          _info->notify();
+          sendSecureNotify(_info, ok?"CERT_MATCH":"CERT_MISMATCH");
           Serial.printf("[BLE-Admin] Cert vs pub: %s\n", ok?"MATCH":"MISMATCH/NA");
           break; }
         case 0x35: { // Pub key presence
           uint8_t pub[65]; size_t len = ProvisioningPhase::getPhonePubRaw(pub, sizeof(pub));
-          _info->setValue((len==65 && pub[0]==0x04)?"PUB_PRESENT":"PUB_NONE");
-          _info->notify();
+          sendSecureNotify(_info, (len==65 && pub[0]==0x04)?"PUB_PRESENT":"PUB_NONE");
           Serial.printf("[BLE-Admin] Pub presence: %s\n", (len==65 && pub[0]==0x04)?"PRESENT":"NONE");
           break; }
         case 0x36: { // KeyId summary
           String kid; bool haveKid = ProvisioningPhase::getKeyId(kid);
+          char buf[40];
           if (!haveKid) {
-            _info->setValue("KEYID_NONE");
-             Serial.printf("[BLE-Admin] KEYID_NONE\n");
-          }else {
-            char buf[40];
-            size_t copyLen = kid.length() < 24 ? kid.length() : 24; // truncate if long
+            strncpy(buf, "KEYID_NONE", sizeof(buf));
+          } else {
+            size_t copyLen = kid.length() < 24 ? kid.length() : 24;
             snprintf(buf, sizeof(buf), "KEYID:%.*s", (int)copyLen, kid.c_str());
-            _info->setValue(buf);
-            Serial.printf("[BLE-Admin] %s\n", buf);
           }
-          _info->notify();
+          sendSecureNotify(_info, buf);
+          Serial.printf("[BLE-Admin] %s\n", buf);
           break; }
+        case 0x37: { // All delegated keys status
+          ProvisioningPhase::DelegatedKey keys[5];
+          int count = ProvisioningPhase::getAllDelegatedKeys(keys, 5);
+          char buf[64];
+          if (count == 0) {
+            strncpy(buf, "SHAREKEY_NONE", sizeof(buf));
+          } else {
+            uint64_t now = millis() / 1000;
+            bool expired = (keys[0].validUntil > 0 && now > keys[0].validUntil);
+            snprintf(buf, sizeof(buf), "KEYS:%d ID0:%.*s EXP:%s PERM:0x%02X",
+                     count, 16, keys[0].keyId,
+                     expired ? "YES" : "NO", keys[0].permissions);
+            for (int i = 0; i < count; i++) {
+              expired = (keys[i].validUntil > 0 && now > keys[i].validUntil);
+              Serial.printf("[BLE-Admin]   Key %d: %s exp=%llu (%s) perm=0x%02X\n",
+                            i, keys[i].keyId, keys[i].validUntil,
+                            expired ? "EXPIRED" : "VALID", keys[i].permissions);
+            }
+          }
+          sendSecureNotify(_info, buf);
+          Serial.printf("[BLE-Admin] %s\n", buf);
+          break; }
+        case 0x38: // Clear all delegated keys
+          ProvisioningPhase::clearSharedKey();
+          sendSecureNotify(_info, "SHAREKEY_CLEARED");
+          Serial.println("[BLE-Admin] SHAREKEY_CLEARED (all delegated keys)");
+          break;
+        case 0x39: { // 🔥 PRODUCTION: Cleanup expired keys
+          int cleaned = ProvisioningPhase::cleanupExpiredKeys();
+          char buf[32];
+          snprintf(buf, sizeof(buf), "CLEANED:%d", cleaned);
+          sendSecureNotify(_info, buf);
+          Serial.printf("[BLE-Admin] Cleaned %d expired keys\n", cleaned);
+          break; }
+        case 0x40: { // UWB status query
+          char buf[48];
+          float dist = UWBRanging::getLastDistance();
+          snprintf(buf, sizeof(buf), "UWB HW=%s EN=%s D=%.2fm",
+                   UWBRanging::isHardwareOK() ? "OK" : "FAIL",
+                   UWBRanging::isEnabled()    ? "ON" : "OFF",
+                   dist >= 0.0f ? dist : -1.0f);
+          sendSecureNotify(_info, buf);
+          Serial.printf("[BLE-Admin] %s\n", buf);
+          break; }
+        case 0x41: // UWB enable (gọi sau BLE auth xong)
+          UWBRanging::enable();
+          sendSecureNotify(_info, "UWB:ENABLED");
+          break;
+        case 0x42: // UWB disable
+          UWBRanging::disable();
+          sendSecureNotify(_info, "UWB:DISABLED");
+          break;
         default:
-          _info->setValue("UNSUPPORTED");
-          _info->notify();
+          sendSecureNotify(_info, "UNSUPPORTED");
           Serial.printf("[BLE-Admin] Unsupported cmd: 0x%02X (len=%u)\n", cmd, (unsigned)v.size());
           break;
       }
@@ -154,8 +255,7 @@ namespace {
     void onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) override {
       // New provisioning flow does not accept phone pubkey via BLE; instruct to use NFC provisioning.
       (void)c; _buf.clear();
-      _info->setValue("UNSUPPORTED_USE_NFC");
-      _info->notify();
+      sendSecureNotify(_info, "UNSUPPORTED_USE_NFC");
     }
   };
 }
@@ -181,5 +281,6 @@ namespace BLEAdmin {
 
   BLEMod::AdminMode getAdminMode() { return s_adminMode; }
   void setAdminMode(BLEMod::AdminMode mode) { s_adminMode = mode; uint8_t m = (uint8_t)mode; if (g_cAdminMode) g_cAdminMode->setValue(&m, 1); }
-  void notify(const char* msg) { if (g_cAdminInfo && msg) { g_cAdminInfo->setValue(msg); g_cAdminInfo->notify(); } }
+  void notify(const char* msg) { if (g_cAdminInfo && msg) { sendSecureNotify(g_cAdminInfo, msg); } }
+  void resetSession() { s_txSeq = 0; s_rxSeq = 0; }
 }

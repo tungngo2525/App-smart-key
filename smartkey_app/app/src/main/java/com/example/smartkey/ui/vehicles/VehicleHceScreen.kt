@@ -51,7 +51,8 @@ fun VehicleHceScreen(vehicleId: String, token: String) {
         }
 
         Spacer(Modifier.height(12.dp))
-        Text("AID đang dùng: F00102030405", style = MaterialTheme.typography.bodyMedium)
+        Text("AID đang dùng: D27600008543434301 (CCC-style)", style = MaterialTheme.typography.bodyMedium)
+        Text("Legacy AID: F00102030405 (IoT compat)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(8.dp))
         Text("Trạng thái: $statusText", style = MaterialTheme.typography.bodySmall)
     }

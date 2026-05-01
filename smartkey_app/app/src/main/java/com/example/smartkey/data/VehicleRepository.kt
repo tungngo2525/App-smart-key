@@ -1,6 +1,7 @@
 package com.example.smartkey.data
 
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.channels.awaitClose
@@ -9,6 +10,24 @@ import kotlinx.coroutines.tasks.await
 
 class VehicleRepository {
     private val db = Firebase.firestore
+
+    private fun mapVehicle(docId: String, profile: Map<*, *>, tb: Map<*, *>): Vehicle {
+        return Vehicle(
+            id = docId,
+            name = profile["name"] as? String ?: "",
+            plate = profile["plate"] as? String ?: "",
+            tbDeviceId = tb["deviceId"] as? String ?: "",
+            ecuVehicleId = profile["ecuVehicleId"] as? String ?: "",
+            ecuSignerPublicKeyHex = tb["devicePublicKeyHex"] as? String ?: "",
+            bleDeviceName = profile["bleDeviceName"] as? String ?: "",
+            needsSetup = profile["needsSetup"] as? Boolean ?: false,
+            location = profile["location"] as? String ?: "",
+            isActive = profile["active"] as? Boolean ?: true,
+            latitude = (profile["latitude"] as? Number)?.toDouble() ?: 0.0,
+            longitude = (profile["longitude"] as? Number)?.toDouble() ?: 0.0,
+            ownerUid = profile["ownerUid"] as? String ?: ""
+        )
+    }
 
     fun vehiclesOf(uid: String) = callbackFlow<List<Vehicle>> {
         val query = db.collection("vehicles")
@@ -29,16 +48,7 @@ class VehicleRepository {
             val list = snap.documents.map { doc ->
                 val profile = doc.get("profile") as? Map<*, *> ?: emptyMap<String, Any>()
                 val tb = doc.get("tb") as? Map<*, *> ?: emptyMap<String, Any>()
-                Vehicle(
-                    id = doc.id,
-                    name = profile["name"] as? String ?: "",
-                    plate = profile["plate"] as? String ?: "",
-                    tbDeviceId = tb["deviceId"] as? String ?: "",
-                    location = profile["location"] as? String ?: "",
-                    isActive = profile["active"] as? Boolean ?: true,
-                    latitude = (profile["latitude"] as? Number)?.toDouble() ?: 0.0,
-                    longitude = (profile["longitude"] as? Number)?.toDouble() ?: 0.0
-                )
+                mapVehicle(doc.id, profile, tb)
             }
             trySend(list)
         }
@@ -59,16 +69,7 @@ class VehicleRepository {
                 }
                 val profile = snap.get("profile") as? Map<*, *> ?: emptyMap<String, Any>()
                 val tb = snap.get("tb") as? Map<*, *> ?: emptyMap<String, Any>()
-                val vehicle = Vehicle(
-                    id = snap.id,
-                    name = profile["name"] as? String ?: "",
-                    plate = profile["plate"] as? String ?: "",
-                    tbDeviceId = tb["deviceId"] as? String ?: "",
-                    location = profile["location"] as? String ?: "",
-                    isActive = profile["active"] as? Boolean ?: true,
-                    latitude = (profile["latitude"] as? Number)?.toDouble() ?: 0.0,
-                    longitude = (profile["longitude"] as? Number)?.toDouble() ?: 0.0
-                )
+                val vehicle = mapVehicle(snap.id, profile, tb)
                 trySend(vehicle)
             }
         awaitClose { reg.remove() }
@@ -79,22 +80,30 @@ class VehicleRepository {
         name: String,
         plate: String,
         tbDeviceId: String,
+        ecuVehicleId: String = "",
         location: String,
         isActive: Boolean,
         latitude: Double,
         longitude: Double
     ) {
+        val normalizedSyncId = tbDeviceId.trim().ifBlank { ecuVehicleId.trim().uppercase() }
         val doc = mapOf(
             "profile" to mapOf(
                 "name" to name,
                 "plate" to plate,
                 "ownerUid" to uid,
+                "ecuVehicleId" to ecuVehicleId,
+                "needsSetup" to false,  // Thêm thủ công = đã setup đầy đủ
                 "location" to location,
                 "active" to isActive,
                 "latitude" to latitude,
                 "longitude" to longitude
             ),
-            "tb" to mapOf("deviceId" to tbDeviceId)
+            "tb" to mapOf(
+                "deviceId" to normalizedSyncId,
+                "syncToken" to normalizedSyncId,
+                "syncMode" to "CLOUD_SYNC"
+            )
         )
         db.collection("vehicles").add(doc).await()
     }
@@ -107,5 +116,119 @@ class VehicleRepository {
         db.collection("vehicles").document(vehicleDocId)
             .update(mapOf("profile.active" to isActive))
             .await()
+    }
+
+    /**
+     * Tìm vehicle dựa trên ECU hardware ID (8-byte hex string)
+     * Theo chuẩn CCC: ecuVehicleId là nguồn gốc định danh thật từ hardware
+     *
+     * Luôn query từ server để tránh trả về xe đã xóa từ offline cache.
+     * Fallback về cache nếu offline.
+     */
+    suspend fun findByEcuVehicleId(ecuVehicleId: String): Vehicle? {
+        if (ecuVehicleId.isBlank()) return null
+
+        val snapshot = try {
+            db.collection("vehicles")
+                .whereEqualTo("profile.ecuVehicleId", ecuVehicleId)
+                .limit(1)
+                .get(Source.SERVER)
+                .await()
+        } catch (_: Exception) {
+            // Offline fallback
+            db.collection("vehicles")
+                .whereEqualTo("profile.ecuVehicleId", ecuVehicleId)
+                .limit(1)
+                .get(Source.CACHE)
+                .await()
+        }
+        
+        if (snapshot.isEmpty) return null
+        
+        val doc = snapshot.documents.first()
+        val profile = doc.get("profile") as? Map<*, *> ?: emptyMap<String, Any>()
+        val tb = doc.get("tb") as? Map<*, *> ?: emptyMap<String, Any>()
+        
+        return mapVehicle(doc.id, profile, tb)
+    }
+
+    /**
+     * Tạo hoặc cập nhật vehicle từ ECU provisioning (chuẩn CCC)
+     * 
+     * Logic chống duplicate:
+     * - Nếu ecuVehicleId đã tồn tại → chỉ cập nhật timestamp (KHÔNG tạo xe mới)
+     * - Nếu chưa có → tạo vehicle mới với needsSetup=true
+     * 
+     * @return vehicleDocId (Firestore document ID)
+     */
+    suspend fun createOrUpdateFromEcu(
+        uid: String,
+        ecuVehicleId: String,
+        name: String = "",
+        plate: String = ""
+    ): String {
+        // Kiểm tra ecuVehicleId đã tồn tại chưa (chống duplicate)
+        val existing = findByEcuVehicleId(ecuVehicleId)
+        
+        if (existing != null) {
+            // Xe đã tồn tại - cập nhật timestamp và backfill cloud sync identity nếu đang thiếu
+            val syncId = existing.tbDeviceId.ifBlank { ecuVehicleId.trim().uppercase() }
+            db.collection("vehicles").document(existing.id)
+                .update(
+                    mapOf(
+                        "profile.lastProvisioned" to System.currentTimeMillis(),
+                        "tb.deviceId" to syncId,
+                        "tb.syncToken" to syncId,
+                        "tb.syncMode" to "CLOUD_SYNC"
+                    )
+                )
+                .await()
+            return existing.id
+        }
+        
+        // Tạo vehicle mới từ ECU (lần đầu tap)
+        val syncId = ecuVehicleId.trim().uppercase()
+        val doc = mapOf(
+            "profile" to mapOf(
+                "name" to name,  // Rỗng - UI sẽ hỏi người dùng sau
+                "plate" to plate,
+                "ownerUid" to uid,
+                "ecuVehicleId" to ecuVehicleId,
+                "needsSetup" to true,  // Đánh dấu cần nhập thông tin
+                "location" to "",
+                "active" to true,
+                "latitude" to 0.0,
+                "longitude" to 0.0,
+                "createdAt" to System.currentTimeMillis(),
+                "lastProvisioned" to System.currentTimeMillis()
+            ),
+            "tb" to mapOf(
+                "deviceId" to syncId,
+                "syncToken" to syncId,
+                "syncMode" to "CLOUD_SYNC"
+            )
+        )
+        val result = db.collection("vehicles").add(doc).await()
+        return result.id
+    }
+
+    /**
+     * Hoàn tất thiết lập vehicle (cập nhật thông tin từ UI sau khi tạo từ ECU)
+     * Theo chuẩn CCC: ECU tạo ID trước, UI hỏi người dùng nhập chi tiết sau
+     */
+    suspend fun completeVehicleSetup(
+        vehicleId: String,
+        name: String,
+        plate: String,
+        location: String
+    ) {
+        db.collection("vehicles").document(vehicleId).update(
+            mapOf(
+                "profile.name" to name,
+                "profile.plate" to plate,
+                "profile.location" to location,
+                "profile.needsSetup" to false  // Đánh dấu đã setup xong
+            )
+        ).await()
     }
 }

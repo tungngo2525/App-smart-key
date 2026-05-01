@@ -1,6 +1,7 @@
 package com.example.smartkey.data
 
 import com.google.firebase.Timestamp
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.tasks.await
@@ -11,7 +12,8 @@ class UserRepository {
     suspend fun createOrUpdateProfile(
         uid: String,
         username: String,
-        email: String
+        email: String,
+        digitalKeyPublicHex: String? = null
     ) {
         val normalizedUsername = username.trim()
         val normalizedEmail = email.trim()
@@ -24,7 +26,41 @@ class UserRepository {
             payload["username"] = normalizedUsername
             payload["usernameLower"] = normalizedUsername.lowercase()
         }
+        if (!digitalKeyPublicHex.isNullOrBlank()) {
+            payload["digitalKeyPublicHex"] = digitalKeyPublicHex.trim().uppercase()
+        }
         db.collection("users").document(uid).set(payload).await()
+    }
+
+    suspend fun updateDigitalKeyMaterial(uid: String, publicKeyHex: String, deviceId: String = "android_default") {
+        val normalized = publicKeyHex.trim().uppercase()
+        val normalizedDeviceId = deviceId.trim().ifBlank { "android_default" }
+        if (normalized.isEmpty()) return
+
+        db.collection("users").document(uid)
+            .set(
+                mapOf(
+                    "digitalKeyPublicHex" to normalized,
+                    "defaultDeviceId" to normalizedDeviceId
+                ),
+                SetOptions.merge()
+            )
+            .await()
+
+        db.collection("users").document(uid)
+            .collection("devices")
+            .document(normalizedDeviceId)
+            .set(
+                mapOf(
+                    "deviceId" to normalizedDeviceId,
+                    "platform" to "android",
+                    "publicKeyHex" to normalized,
+                    "status" to "active",
+                    "updatedAt" to Timestamp.now()
+                ),
+                SetOptions.merge()
+            )
+            .await()
     }
 
     suspend fun profileOf(uid: String): UserProfile? {

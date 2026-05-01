@@ -6,10 +6,10 @@
     "lint": "eslint .",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "build": "echo \"Functions use Node 18 runtime\""
+    "build": "echo \"Functions use Node 22 runtime\""
   },
   "engines": {
-    "node": "18"
+    "node": "22"
   },
   "dependencies": {
     "firebase-admin": "^12.0.0",

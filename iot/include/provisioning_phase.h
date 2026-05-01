@@ -4,6 +4,27 @@
 class PN532; // forward decl
 
 namespace ProvisioningPhase {
+  // 🔐 PRODUCTION: Key Lifecycle Management
+  // Multi-key support with expiry and permission levels
+  
+  #define MAX_DELEGATED_KEYS 5  // Support up to 5 delegated keys
+  
+  // Permission levels for delegated keys
+  enum KeyPermission {
+    PERM_FULL = 0xFF,      // Full access (same as owner)
+    PERM_VALET = 0x03,     // Valet mode: lock/unlock only (no trunk, no admin)
+    PERM_UNLOCK = 0x01,    // Unlock only
+    PERM_LOCK = 0x02       // Lock only
+  };
+  
+  // Delegated key structure with lifecycle metadata
+  struct DelegatedKey {
+    char keyId[65];        // Unique key identifier (ASCII)
+    uint8_t pubKey[65];    // ECDSA P-256 public key (0x04||X||Y)
+    uint64_t validUntil;   // Unix timestamp (0 = no expiry)
+    uint8_t permissions;   // KeyPermission bitfield
+    bool active;           // Is this slot active?
+  };
   // Initialize provisioning (e.g., device keypair generation). Safe to call once at boot.
   void begin();
 
@@ -22,10 +43,54 @@ namespace ProvisioningPhase {
   // Persist optional certificate chain blob
   bool storeCertChain(const uint8_t* cert, size_t certLen);
 
+  // 🔐 PRODUCTION: Multi-key lifecycle management
+  // Store delegated key with expiry and permissions
+  bool storeSharedKeyCcc(const char* keyIdAscii,
+                         const uint8_t* delegatedPub65,
+                         const uint8_t* ownerSigDer, size_t ownerSigLen,
+                         const uint8_t* sessionCtx, size_t sessionCtxLen,
+                         uint64_t validUntil = 0,
+                         uint8_t permissions = PERM_FULL);
+  
+  // Find valid delegated key (checks expiry + permissions)
+  bool findValidDelegatedKey(const uint8_t* pubKey65, uint8_t* permissionsOut, char* keyIdOut);
+  
+  // Get all delegated keys (for admin/status)
+  int getAllDelegatedKeys(DelegatedKey* keysOut, int maxKeys);
+  
+  // Remove expired keys (auto-cleanup)
+  int cleanupExpiredKeys();
+  
+  // Clear specific key by keyId
+  bool clearDelegatedKey(const char* keyId);
+  
+  // Clear all delegated keys
+  void clearAllDelegatedKeys();
+
+  // Trusted cloud sync path: upsert a delegated key issued by backend
+  bool upsertDelegatedKeyFromCloud(const char* keyIdAscii,
+                                   const uint8_t* delegatedPub65,
+                                   uint64_t validUntil = 0,
+                                   uint8_t permissions = PERM_FULL);
+  
+  // Legacy compatibility (deprecated)
+  bool hasSharedKey();
+  bool getSharedKeyId(String& out);
+  size_t getSharedPubRaw(uint8_t* out, size_t max);
+  void clearSharedKey();
+
   // Verify ECDSA-P256 DER signature over data using uncompressed 65-byte public key
   bool verifySignatureP256(const uint8_t* pub65,
                            const uint8_t* data, size_t dataLen,
                            const uint8_t* sigDer, size_t sigLen);
+
+  // Sign data using the ECU long-term keypair generated in provisioning.
+  // Returns DER signature length written to outSig, or 0 on failure.
+  size_t signWithDeviceKey(const uint8_t* data, size_t dataLen,
+                           uint8_t* outSig, size_t outMax);
+
+  // Read ECU long-term public key as uncompressed 65-byte point.
+  bool getDevicePubRaw(uint8_t* out65, size_t max);
 
   // Clear all provisioning-related state (keys and key id)
   void clearAll();

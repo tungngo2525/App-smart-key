@@ -13,4 +13,7 @@ namespace BLEAdmin {
 
   // Push a short info message and notify (safe to call from app code)
   void notify(const char* msg);
+
+  // Reset sequence counters on BLE session disconnect
+  void resetSession();
 }

@@ -5,5 +5,6 @@ data class UserProfile(
     val username: String = "",
     val usernameLower: String = "",
     val email: String = "",
-    val emailLower: String = ""
+    val emailLower: String = "",
+    val digitalKeyPublicHex: String = ""
 )

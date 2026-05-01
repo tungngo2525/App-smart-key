@@ -26,6 +26,17 @@ namespace BLE {
   void onAdminCommand();
 }
 
+/**
+ * UWB namespace — CCC Phase C ranging events
+ * Gọi từ uwb_ranging.cpp khi khoảng cách vượt ngưỡng
+ */
+namespace UWB {
+  /** Key fob đã vào vùng gần (≤ UNLOCK_THRESHOLD) liên tiếp đủ CONFIRM_COUNT lần */
+  void onInRange();
+  /** Key fob ra xa (> LOCK_THRESHOLD) hoặc mất tín hiệu */
+  void onOutOfRange();
+}
+
 namespace SerialCmd {
   void startProvisioning();
   void toggleForceProvision();

@@ -1,0 +1,51 @@
+--- Find this block (around line 995-1027) and replace ---
+
+FROM:
+            }
+            
+#if DEBUG_LOGS
+            Serial.println("⏳ Waiting for card removal (CCC spec)...");
+#endif
+            // CRITICAL: Must release PN532 session BEFORE polling for removal
+            // Otherwise readPassiveTargetID hangs because PN532 still in APDU mode
+            nfc->inRelease(0);
+            delay(100);  // Let PN532 settle
+            
+            // PRACTICAL: PN532 I2C removal detection after APDU is unreliable
+            // Try 3 times (30s total), then proceed with warning
+            int maxAttempts = 3;
+            bool removed = false;
+            for (int attempt = 1; attempt <= maxAttempts && !removed; ++attempt) {
+                if (waitForRemoval(10000, 2, 50)) {
+                    // Card actually removed - proceed to next session
+#if DEBUG_LOGS
+                    Serial.println("✅ Card removed - ready for next tap\n");
+#endif
+                    removed = true;
+                } else {
+                    // Still present after 10s
+                    if (attempt < maxAttempts) {
+                        Serial.println("⚠️  Please remove phone from reader to complete session");
+                    } else {
+                        // After 3 attempts (30s), proceed anyway with warning
+                        Serial.println("⚠️  Removal detection timeout - proceeding (card may still be present)");
+                        Serial.println("    Next tap will be blocked for 3s to prevent double-trigger\n");
+                        // Add 3s cooldown to prevent immediate re-trigger if card still there
+                        delay(3000);
+                    }
+                }
+            }
+        }
+
+TO:
+            }
+            
+            // Record this auth to block same card for cooldown period
+            memcpy(lastAuthUID, currentUID, currentUIDLen);
+            lastAuthUIDLen = currentUIDLen;
+            lastAuthCompletedMs = millis();
+            
+#if DEBUG_LOGS
+            Serial.printf("✅ Auth complete! Card blocked for %ums\n\n", AUTH_COOLDOWN_MS);
+#endif
+        }

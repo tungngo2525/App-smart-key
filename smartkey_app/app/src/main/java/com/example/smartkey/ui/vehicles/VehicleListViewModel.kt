@@ -1,5 +1,6 @@
 package com.example.smartkey.ui.vehicles
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartkey.data.SharePayload
@@ -101,6 +102,7 @@ class VehicleListViewModel(
                     name.trim(),
                     plate.trim(),
                     tbDeviceId.trim(),
+                    ecuVehicleId = "",  // Sẽ được điền tự động khi tap NFC
                     location.trim(),
                     isActive,
                     latitude,
@@ -127,7 +129,9 @@ class VehicleListViewModel(
         targetEmail: String,
         durationHours: Int,
         unlimited: Boolean,
-        password: String
+        permissions: Int,
+        password: String,
+        appContext: Context
     ) {
         val ownerUid = uid ?: return
         val trimmed = targetEmail.trim()
@@ -143,29 +147,41 @@ class VehicleListViewModel(
                     ?: userRepository.profileOf(ownerUid)?.username
                     ?: auth.currentUser?.email
                     ?: ""
-                val grantee = userRepository.findByEmail(trimmed)
-                    ?: throw IllegalArgumentException("Không tìm thấy email $trimmed")
+                if (trimmed.equals(auth.currentUser?.email, ignoreCase = true)) {
+                    throw IllegalArgumentException("Không thể chia sẻ xe cho chính bạn")
+                }
+
                 val expiresAt = if (unlimited) 0L else System.currentTimeMillis() + hours * 60L * 60L * 1000L
                 val payload = SharePayload(
                     vehicleId = vehicle.id,
                     vehicleName = vehicle.name,
                     vehiclePlate = vehicle.plate,
                     tbDeviceId = vehicle.tbDeviceId,
+                    ecuVehicleId = vehicle.ecuVehicleId,
                     vehicleLocation = vehicle.location,
                     vehicleActive = vehicle.isActive,
                     vehicleLatitude = vehicle.latitude,
                     vehicleLongitude = vehicle.longitude,
                     ownerUid = ownerUid,
                     ownerUsername = ownerProfile,
-                    granteeUid = grantee.uid,
-                    granteeEmail = grantee.email,
-                    expiresAt = expiresAt
+                    granteeUid = "",
+                    granteeEmail = trimmed,
+                    granteePublicKeyHex = "",
+                    expiresAt = expiresAt,
+                    permissions = permissions
                 )
                 shareRepository.createShare(payload)
+
+                val permissionLabel = when (permissions and 0xFF) {
+                    0x03 -> "valet"
+                    0x01 -> "chỉ mở khóa"
+                    0x02 -> "chỉ khóa"
+                    else -> "toàn quyền"
+                }
                 val message = if (unlimited) {
-                    "Đã chia sẻ không giới hạn cho ${grantee.email}"
+                    "Đã cấp key $permissionLabel cho $trimmed. Xe sẽ tự đồng bộ quyền qua cloud khi online."
                 } else {
-                    "Đã chia sẻ cho ${grantee.email}"
+                    "Đã cấp key $permissionLabel cho $trimmed trong ${hours}h. Xe sẽ tự đồng bộ quyền qua cloud khi online."
                 }
                 _ui.update { it.copy(message = message) }
             } catch (e: Exception) {
@@ -183,10 +199,24 @@ class VehicleListViewModel(
                     share.vehicleId,
                     share.granteeUid
                 )
-                _ui.update { it.copy(message = "Đã thu hồi ${share.granteeIdentifier}") }
+                _ui.update {
+                    it.copy(message = "Đã thu hồi ${share.granteeIdentifier}. Xe sẽ nhận lệnh thu hồi qua cloud ở lần sync kế tiếp.")
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
                 _ui.update { it.copy(error = e.message ?: "Thu hồi thất bại") }
+            }
+        }
+    }
+
+    fun completeSetup(vehicleId: String, name: String, plate: String, location: String) {
+        viewModelScope.launch {
+            try {
+                repo.completeVehicleSetup(vehicleId, name, plate, location)
+                _ui.update { it.copy(message = "Đã lưu thông tin xe") }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _ui.update { it.copy(error = e.message ?: "Cập nhật thất bại") }
             }
         }
     }

@@ -297,11 +297,11 @@ State handle_IDLE() {
  */
 State handle_PROVISIONING_WAIT_TAP() {
   static uint32_t startTime = 0;
-  const uint32_t TIMEOUT_MS = 30000;
+  const uint32_t TIMEOUT_MS = 15000;
   
   if (g_stateInfo.enter_time == millis() || startTime == 0) {
     startTime = millis();
-    Serial.println("[FSM/PROV] Waiting for NFC tap... (30s timeout)");
+    Serial.println("[FSM/PROV] Waiting for NFC tap... (15s timeout)");
     BLEMod::adminNotify("TAP_PHONE_TO_READER");
   }
   

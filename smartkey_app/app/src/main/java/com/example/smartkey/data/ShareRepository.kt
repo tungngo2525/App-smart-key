@@ -1,7 +1,7 @@
 package com.example.smartkey.data
 
-import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.functions.ktx.functions
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -9,6 +9,7 @@ import kotlinx.coroutines.tasks.await
 
 class ShareRepository {
     private val db = Firebase.firestore
+    private val functions = Firebase.functions("us-central1")
 
     fun sharesFor(uid: String) = callbackFlow<List<SharedVehicle>> {
         val query = db.collection("shares")
@@ -28,6 +29,7 @@ class ShareRepository {
                     name = doc.getString("vehicleName") ?: "",
                     plate = doc.getString("vehiclePlate") ?: "",
                     tbDeviceId = doc.getString("tbDeviceId") ?: "",
+                    ecuVehicleId = doc.getString("ecuVehicleId") ?: "",
                     location = doc.getString("vehicleLocation") ?: "",
                     isActive = doc.getBoolean("vehicleActive") ?: true,
                     latitude = doc.getDouble("vehicleLatitude") ?: 0.0,
@@ -35,7 +37,8 @@ class ShareRepository {
                     ownerUsername = doc.getString("ownerUsername") ?: "",
                     granteeIdentifier = doc.getString("granteeEmail") ?: "",
                     granteeUid = doc.getString("granteeUid") ?: "",
-                    expiresAt = doc.getLong("expiresAt") ?: 0L
+                    expiresAt = doc.getLong("expiresAt") ?: 0L,
+                    permissions = (doc.getLong("permissions") ?: 0xFFL).toInt()
                 )
             }?.filterNot { it.isExpired } ?: emptyList()
             trySend(list)
@@ -61,6 +64,7 @@ class ShareRepository {
                     name = doc.getString("vehicleName") ?: "",
                     plate = doc.getString("vehiclePlate") ?: "",
                     tbDeviceId = doc.getString("tbDeviceId") ?: "",
+                    ecuVehicleId = doc.getString("ecuVehicleId") ?: "",
                     location = doc.getString("vehicleLocation") ?: "",
                     isActive = doc.getBoolean("vehicleActive") ?: true,
                     latitude = doc.getDouble("vehicleLatitude") ?: 0.0,
@@ -68,7 +72,8 @@ class ShareRepository {
                     ownerUsername = doc.getString("ownerUsername") ?: "",
                     granteeIdentifier = doc.getString("granteeEmail") ?: "",
                     granteeUid = doc.getString("granteeUid") ?: "",
-                    expiresAt = doc.getLong("expiresAt") ?: 0L
+                    expiresAt = doc.getLong("expiresAt") ?: 0L,
+                    permissions = (doc.getLong("permissions") ?: 0xFFL).toInt()
                 )
             }?.filterNot { it.isExpired } ?: emptyList()
             trySend(list)
@@ -94,6 +99,7 @@ class ShareRepository {
                     name = doc.getString("vehicleName") ?: "",
                     plate = doc.getString("vehiclePlate") ?: "",
                     tbDeviceId = doc.getString("tbDeviceId") ?: "",
+                    ecuVehicleId = doc.getString("ecuVehicleId") ?: "",
                     location = doc.getString("vehicleLocation") ?: "",
                     isActive = doc.getBoolean("vehicleActive") ?: true,
                     latitude = doc.getDouble("vehicleLatitude") ?: 0.0,
@@ -101,7 +107,8 @@ class ShareRepository {
                     ownerUsername = doc.getString("ownerUsername") ?: "",
                     granteeIdentifier = doc.getString("granteeEmail") ?: "",
                     granteeUid = doc.getString("granteeUid") ?: "",
-                    expiresAt = doc.getLong("expiresAt") ?: 0L
+                    expiresAt = doc.getLong("expiresAt") ?: 0L,
+                    permissions = (doc.getLong("permissions") ?: 0xFFL).toInt()
                 )
             }?.filterNot { it.isExpired } ?: emptyList()
             trySend(list)
@@ -109,49 +116,50 @@ class ShareRepository {
         awaitClose { reg.remove() }
     }
 
-    suspend fun createShare(payload: SharePayload) {
-        val doc = mapOf(
+    suspend fun createShare(payload: SharePayload): String {
+        val request = hashMapOf(
             "vehicleId" to payload.vehicleId,
-            "vehicleName" to payload.vehicleName,
-            "vehiclePlate" to payload.vehiclePlate,
-            "tbDeviceId" to payload.tbDeviceId,
-            "vehicleLocation" to payload.vehicleLocation,
-            "vehicleActive" to payload.vehicleActive,
-            "vehicleLatitude" to payload.vehicleLatitude,
-            "vehicleLongitude" to payload.vehicleLongitude,
-            "ownerUid" to payload.ownerUid,
-            "ownerUsername" to payload.ownerUsername,
-            "granteeUid" to payload.granteeUid,
-            "granteeEmail" to payload.granteeEmail,
+            "targetUid" to payload.granteeUid,
+            "targetEmail" to payload.granteeEmail,
+            "targetDeviceId" to payload.granteeDeviceId,
+            "permissions" to (payload.permissions and 0xFF),
             "expiresAt" to payload.expiresAt,
-            "status" to "active",
-            "createdAt" to FieldValue.serverTimestamp()
+            "ownerUsername" to payload.ownerUsername
         )
-        db.collection("shares").add(doc).await()
-        db.collection("shareLookup")
-            .document(payload.vehicleId)
-            .collection("recipients")
-            .document(payload.granteeUid)
-            .set(
-                mapOf(
-                    "vehicleId" to payload.vehicleId,
-                    "ownerUid" to payload.ownerUid,
-                    "granteeUid" to payload.granteeUid
-                )
-            )
+
+        val result = functions
+            .getHttpsCallable("issueVehicleCredential")
+            .call(request)
             .await()
+
+        val data = result.data as? Map<*, *> ?: emptyMap<String, Any?>()
+        val ok = data["ok"] as? Boolean ?: false
+        if (!ok) {
+            throw IllegalStateException("Không thể cấp ShareKey từ máy chủ")
+        }
+
+        return data["shareId"] as? String
+            ?: throw IllegalStateException("Máy chủ không trả về shareId")
     }
 
     suspend fun revokeShare(shareId: String, vehicleId: String, granteeUid: String) {
-        db.collection("shares").document(shareId)
-            .update(mapOf("status" to "revoked"))
+        val request = hashMapOf(
+            "vehicleId" to vehicleId,
+            "shareId" to shareId,
+            "targetUid" to granteeUid,
+            "reason" to "owner_revoked"
+        )
+
+        val result = functions
+            .getHttpsCallable("revokeVehicleCredential")
+            .call(request)
             .await()
-        db.collection("shareLookup")
-            .document(vehicleId)
-            .collection("recipients")
-            .document(granteeUid)
-            .delete()
-            .await()
+
+        val data = result.data as? Map<*, *> ?: emptyMap<String, Any?>()
+        val ok = data["ok"] as? Boolean ?: false
+        if (!ok) {
+            throw IllegalStateException("Không thể thu hồi ShareKey từ máy chủ")
+        }
     }
 }
 
@@ -160,6 +168,7 @@ data class SharePayload(
     val vehicleName: String,
     val vehiclePlate: String,
     val tbDeviceId: String,
+    val ecuVehicleId: String,
     val vehicleLocation: String,
     val vehicleActive: Boolean,
     val vehicleLatitude: Double,
@@ -168,5 +177,8 @@ data class SharePayload(
     val ownerUsername: String,
     val granteeUid: String,
     val granteeEmail: String,
-    val expiresAt: Long
+    val granteePublicKeyHex: String,
+    val granteeDeviceId: String = "android_default",
+    val expiresAt: Long,
+    val permissions: Int
 )
